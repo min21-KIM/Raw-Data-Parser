@@ -1,0 +1,1170 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Raw Data Parser (브랜딩1팀)</title>
+<style>
+  /* ===== Base UI ===== */
+  body { font-family: "Noto Sans KR", sans-serif; margin: 20px; }
+  h1 { margin-top: 0; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .card { border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px; box-shadow: 0 2px 6px rgba(0,0,0,.05); background: #fff; margin-bottom:16px; }
+  .muted { color: #6b7280; font-size: 12px; }
+  #brandNotice{ font-size: 14px; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { border: 1px solid #e5e7eb; padding: 8px; font-size: 13px; vertical-align: top; }
+  th { background: #f9fafb; position: sticky; top: 0; z-index: 1; }
+  .sticky { max-height: 440px; overflow: auto; }
+  :root { --btn-rgb: 34, 48, 85; }
+  .btn { display: inline-block; padding: 10px 14px; border-radius: 8px; background: rgb(var(--btn-rgb)); color: #fff; cursor: pointer; border: none; }
+  .btn.secondary { background: rgb(var(--btn-rgb)); color: #fff; }
+  .btn.ghost { background: rgb(var(--btn-rgb)); color: #fff; }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+  input[type="text"], select { padding: 8px; border: 1px solid #d1d5db; border-radius: 8px; }
+  .mono { font-family: inherit; }
+  .status { white-space: pre-wrap; font-size: 12px; background: #f8fafc; border:1px solid #e2e8f0; padding:8px; border-radius:8px; max-height:160px; overflow:auto;}
+  .grid { display:grid; grid-template-columns: 1fr 1fr; gap:16px; }
+  .pill { padding:4px 8px; border-radius:999px; background:#eef2ff; color:#3730a3; font-size:12px; }
+
+  /* ===== Missing-label UX ===== */
+  .flag-missing { background:#fff7ed; }
+  .badge-missing { display:inline-block; padding:2px 6px; border-radius:999px; font-size:11px; background:#f97316; color:#fff; }
+  .missing-editor { display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
+  .missing-editor input { width:96px; font-size:12px; padding:6px; }
+  .missing-editor label > .muted { white-space: nowrap; overflow-wrap: normal; word-break: keep-all; }
+  .missing-editor label { white-space: nowrap; }
+
+  /* ===== Small UI helpers ===== */
+  .subsec-title{font-size:15px;font-weight:600;margin:12px 0 6px;}
+  .smallline{font-size:12px;color:#666; white-space:nowrap;}
+  .row-compact label{margin-right:10px;}
+  .smallcheck label{font-size:12px;}
+  .soft-hr{height:1px;border:0;background:#e5e7eb;margin:10px 0;}
+  .smalllabels label,.smalllabels input{font-size:12px;}
+  .row.smalllabels,
+  .row.row-compact.smalllabels{ display:inline-flex; flex-wrap:nowrap; align-items:center; gap:10px; }
+  .row.smalllabels label,
+  .row.row-compact.smalllabels label{ white-space:nowrap; }
+  .tk-inline { display:flex; gap:10px; align-items:center; flex-wrap:nowrap; }
+@media (max-width: 900px){
+  .row.smalllabels,
+  .row.row-compact.smalllabels{ flex-wrap:wrap; }
+}
+
+  /* ===== Summary table column sizing ===== */
+  :root {
+    --col-num: 56px;     /* 번호 열 */
+    --col-type: 160px;   /* 응답방식 열 */
+    --col-index: 230px;  /* 문항 인덱스 열 */
+    --col-stem: 24%;  /* 질문 원본 열 폭 제어(%로) */
+  }
+  #summaryTable { table-layout: fixed; }
+  #summaryTable th,
+  #summaryTable td { overflow-wrap: anywhere; word-break: break-word; }
+  #summaryTable td input[type="text"] {
+    width: 100%;
+    box-sizing: border-box;
+  }
+  #summaryTable th:first-child,
+  #summaryTable td:first-child {
+    text-align: center;
+  }
+
+</style>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+</head>
+<body>
+<h1>😵 Raw Data Parser</h1>
+<p class="muted">틸리언에서 다운로드한 Raw Data 업로드해 전반적인 설문 구조를 확인 → 문항 리스트(To-Know) 파일을 업데이트하거나, AI를 통해 문항별 인덱스 처리 → 사용자가 자동 처리된 응답방식 및 인덱스를 확인/수정 → 헤더가 변경된 XLSX 파일을 다운로드</p>
+
+<div class="grid">
+  <!-- ===== Section 1: Raw 파일 업로드 & 구조 인식 ===== -->
+  <div class="card">
+    <h3>1) Raw Data 업로드</h3>
+    <div class="row">
+      <input type="file" id="rawFile" accept=".xlsx"/>
+      <select id="rawSheet" disabled></select>
+      <button class="btn" id="parseRawBtn" disabled>설문 구조 확인</button>
+    </div>
+    <p class="muted">※ 헤더는 1행=질문문, 2행=변수명([0,1]); 첫 셀(0,0)은 비어도 정상.</p>
+    <div class="status" id="rawLog"></div>
+    <div class="row" style="margin-top:8px;">
+      <span class="pill">A~D 삭제</span>
+      <span class="pill">E=성별 F=연령(1세단위) G=연령(10세단위) H=지역</span>
+    </div>
+  </div>
+
+  <!-- ===== Section 2: To-Know 업로드 & 인덱스 맵 생성 ===== -->
+  <div class="card">
+    <h3>2) 문항별 인덱스 생성</h3>
+    <h5 class="subsec-title">문항 리스트(To-Know) 파일을 업로드해 인덱스 생성</h5>
+    <div class="row">
+      <input type="file" id="tkFile" accept=".xlsx"/>
+      <select id="tkSheet" disabled></select>
+    </div>
+    <div class="tk-inline">
+      <div class="row smalllabels" style="margin-top:8px;">
+        <label style="display:none;">헤더 행: <input type="text" id="tkHeaderRow" placeholder="예: 2" style="width:90px"/></label>
+        <label>No. 열: <input type="text" id="tkNoCol" placeholder="예: D" style="width:70px"/></label>
+        <label>문항 열: <input type="text" id="tkItemCol" placeholder="예: E" style="width:70px"/></label>
+      </div>
+      <div class="row row-compact smalllabels" style="margin-top:6px;">
+        <label>구분 열: <input type="text" id="tkGroupCol1" placeholder="예: B" style="width:60px"/></label>
+        <label>하위 구분 열: <input type="text" id="tkGroupCol2" placeholder="예: C" style="width:60px"/></label>
+      </div>
+    </div>
+    <div id="tkDetectSummary" class="smallline" style="margin-top:4px;"></div>
+    <div class="row" style="margin-top:6px;">
+      <button class="btn secondary" id="buildMapBtn" disabled>인덱스 채우기</button>
+    </div>
+    <div class="row smallcheck" style="margin-top:8px;">
+      <label><input type="checkbox" id="useGroupPref" checked/> 인덱스에 '구분' 포함</label>
+      <label><input type="checkbox" id="useSubLabel" checked/> 인덱스에 '구분'과 '하위 구분' 포함</label>
+    </div>
+    <hr class="soft-hr">
+    <h5 class="subsec-title" style="margin-top:10px;">AI를 통해 인덱스 생성</h5>
+    <div class="row" style="margin-top:6px;">
+      <button class="btn secondary" id="aiNameBtn" disabled>AI로 비어있는 인덱스 채우기</button>
+    </div>
+    <div class="muted" id="brandNotice" style="margin-top:4px;">
+      ※ 개인 API Key를 사용하고 있으므로 브랜딩1팀 외부 공유를 절대 금함
+    </div>
+    <div class="status" id="tkLog"></div>
+  </div>
+</div>
+
+<!-- ===== Section 3: 요약 테이블 ===== -->
+<div class="card">
+  <h3>3) 설문 구조 확인 결과</h3>
+  <div class="sticky">
+    <table id="summaryTable">
+      <colgroup>
+        <col style="width: var(--col-num);" />
+        <col style="width: var(--col-stem);" />
+        <col style="width: var(--col-type);" />
+        <col style="width: var(--col-index);" />
+        <col style="width: calc(100% - (var(--col-num) + var(--col-type) + var(--col-index)) - var(--col-stem));" />
+      </colgroup>
+      <thead>
+        <tr>
+          <th>번호</th>
+          <th>질문 원본</th>
+          <th>응답방식</th>
+          <th>문항 인덱스</th>
+          <th>보기</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ===== Section 4: 다운로드 옵션 & 실행 ===== -->
+<div class="card">
+  <h3>4) 헤더 변경 후 파일 다운로드</h3>
+  <div class="row" style="align-items:center; gap:12px;">
+    <label><input type="checkbox" id="optCodeOnly"/> 코드열만 추출</label>
+    <label><input type="checkbox" id="optTextOnly"/> 텍스트열만 추출</label>
+    <button class="btn secondary" id="applyBtn" disabled>헤더 변경 & XLSX 다운로드</button>
+  </div>
+</div>
+
+<script>
+/* ===== Feature Flags (켜기/끄기) =====
+   - useProxy: 프록시 경유 ON/OFF (기본 OFF → 기존 동작 유지)
+   - enumsCentralized: 문자열 상수 중앙관리 (표현만 통일, 동작 동일)
+*/
+const FEATURE_FLAGS = {
+  useProxy: true,
+  enumsCentralized: true
+};
+
+/* ===== Centralized Constants ===== */
+const RTYPE = Object.freeze({
+  SINGLE: "단일응답",
+  MULTI: "중복응답",
+  RANK: "순위응답",
+  MATRIX: "리커트척도(Matrix)",
+  LIKERT: "리커트척도(단일)",
+  OPEN: "오픈응답",
+  UNKNOWN: "모르겠음"
+});
+const SPECIAL = Object.freeze({ ETC: 99, NONE: 100 });
+
+/* ===== OpenAI 사용을 위한 프록시 설정 ===== */
+const AI_PROXY_PATH = "https://branding1-team-server.vercel.app/api/ai-index";
+const TEAM_TOKEN = "Branding1team_2025";
+
+/* ===== OpenAI API KEY 직접 설정 ===== */
+// const OPENAI_API_KEY = "sk-(개인 키)";
+// const OPENAI_MODEL   = "gpt-4.1";
+
+/* ===== App State ===== */
+let rawWB, rawWS, rawAOA;
+let rawColumns=[], rawRows=[];
+let rawColsByQ = {};
+let summary=[];                  // 요약표 데이터
+let tkWB, tkWS, tkAOA;
+let tkMap = {};                  // To-Know 기반 인덱스
+const RAW_HEADER_ROWS = [0,1];
+const manualOptionLabels = {};   // ★ 사용자가 채운 '라벨 없음' 보정 { Q: { n: "라벨" } }
+
+/* ===== Log Helper ===== */
+const rawLog = document.getElementById('rawLog');
+const tkLog  = document.getElementById('tkLog');
+function log(el,msg){ console.log(msg); el.textContent += msg + "\n"; el.scrollTop = el.scrollHeight; }
+
+/* ===== Utilities: Excel index/name, arrays, text ===== */
+function colNameToIdx(name){
+  if(!name) return null;
+  name = name.trim().toUpperCase();
+  let n=0;
+  for(let i=0;i<name.length;i++){
+    const c = name.charCodeAt(i);
+    if(c<65 || c>90) return null;
+    n = n*26 + (c-64);
+  }
+  return n-1;
+}
+function idxToColName(idx){
+  let s=""; idx++;
+  while(idx>0){ const m=(idx-1)%26; s=String.fromCharCode(65+m)+s; idx=Math.floor((idx-1)/26); }
+  return s;
+}
+function safeAOA(ws){
+  let a = XLSX.utils.sheet_to_json(ws, {header:1, raw:true});
+  const max = Math.max(...a.map(r=>Array.isArray(r)?r.length:0));
+  a = a.map(r=>{
+    const row = Array.isArray(r)? r.slice() : [];
+    if(row.length<max) row.length=max;
+    return row.map(v=> (v===undefined? "": v));
+  });
+  return a;
+}
+function mode(arr){
+  const c=new Map();
+  arr.forEach(v=>{ c.set(v,(c.get(v)||0)+1); });
+  let best=null,bc=-1;
+  for(const [k,v] of c.entries()){ if(v>bc){bc=v;best=k;} }
+  return best;
+}
+function extractQnumFromQtext(qtext){
+  if(typeof qtext!=="string") return null;
+  const m = qtext.match(/^\s*Q\s*(\d+)\./);
+  return m ? `Q${m[1]}` : null;
+}
+function extractQnumFromVar(v){
+  if(typeof v!=="string") return null;
+  const m = v.match(/(Q\d+)/);
+  return m ? m[1] : null;
+}
+function toStr(v){ return String(v == null ? "" : v).trim(); }
+function hasAnyTextPresent(varTextObj){
+  const col = varTextObj.colIndex;
+  for (const r of rawRows){ if (toStr(r?.[col])!=="") return true; }
+  return false;
+}
+function isOpenByAllBlankBase(varCodeObj){
+  const colC = varCodeObj.colIndex;
+  for (const r of rawRows){ if (toStr(r?.[colC]) !== "") return false; }
+  return true;
+}
+function isLikertCodeRange(varCodeObj){
+  const colC = varCodeObj.colIndex;
+  const codeVals = [];
+  for (const r of rawRows){ const s = toStr(r?.[colC]); if (s !== "") codeVals.push(s); }
+  if (!codeVals.length) return false;
+  const nums = new Set(codeVals.map(Number).filter(n=>!Number.isNaN(n)));
+  const set5 = [1,2,3,4,5], set7 = [1,2,3,4,5,6,7];
+  const ok5 = Array.from(nums).every(x => set5.includes(x));
+  const ok7 = Array.from(nums).every(x => set7.includes(x));
+  return ok5 || ok7;
+}
+function hasAnyEllipsisText(varTextObj){
+  const colT = varTextObj.colIndex;
+  for (const r of rawRows){ if (toStr(r?.[colT]) === '...') return true; }
+  return false;
+}
+function escapeHtml(str){
+  return String(str).replace(/[&<>"]/g,(c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]) );
+}
+function makeIndexNameMinimal(q, qtext){
+  let stem = (typeof qtext === "string" ? qtext : "").replace(/^\s*Q\s*\d+\.\s*/, "").trim();
+  if (/연상|떠오르/.test(stem)) {
+    if (/브랜드/.test(stem)) return "브랜드연상";
+    if (/속성|이미지/.test(stem)) return "속성연상";
+    return "연상";
+  }
+  if (/호감/.test(stem)) return "호감도";
+  if (/신뢰/.test(stem)) return "신뢰도";
+  if (/만족/.test(stem)) return "만족도";
+  if (/의향/.test(stem)) return "이용의향";
+  if (/인지|알고/.test(stem)) return "인지";
+  return stem.slice(0, 20) || `${q}_인덱스`;
+}
+function getSheetStartCol(ws){
+  try {
+    const ref = ws && ws['!ref'] ? ws['!ref'] : 'A1:A1';
+    return XLSX.utils.decode_range(ref).s.c | 0;
+  } catch(e){ return 0; }
+}
+
+/* ===== Raw 파일 업로드 처리 ===== */
+const rawFile = document.getElementById('rawFile');
+const rawSheetSel = document.getElementById('rawSheet');
+const parseRawBtn = document.getElementById('parseRawBtn');
+const applyBtn = document.getElementById('applyBtn');
+
+rawFile.addEventListener('change', e=>{
+  rawLog.textContent="";
+  const f = e.target.files[0];
+  if(!f){ parseRawBtn.disabled=true; return; }
+  const rd = new FileReader();
+  rd.onload = ev=>{
+    try{
+      rawWB = XLSX.read(new Uint8Array(ev.target.result), {type:'array'});
+      rawSheetSel.innerHTML="";
+      rawWB.SheetNames.forEach(n=>{
+        const o=document.createElement('option'); o.value=n; o.textContent=n; rawSheetSel.appendChild(o);
+      });
+      rawSheetSel.disabled=false; parseRawBtn.disabled=false;
+      log(rawLog, "Raw 워크북 로드: " + rawWB.SheetNames.join(", "));
+    }catch(err){
+      alert("Raw 파싱 실패: " + err.message);
+      log(rawLog, err.stack);
+    }
+  };
+  rd.readAsArrayBuffer(f);
+});
+
+/* ===== To-Know 업로드 처리 ===== */
+const tkFile = document.getElementById('tkFile');
+const tkSheetSel = document.getElementById('tkSheet');
+const tkHeaderRowInp = document.getElementById('tkHeaderRow');
+const tkNoColInp = document.getElementById('tkNoCol');
+const tkItemColInp = document.getElementById('tkItemCol');
+const tkGroupCol1 = document.getElementById('tkGroupCol1');
+const tkGroupCol2 = document.getElementById('tkGroupCol2');
+const tkDetectSummary = document.getElementById('tkDetectSummary');
+const buildMapBtn = document.getElementById('buildMapBtn');
+const useGroupPref = document.getElementById('useGroupPref');
+const useSubLabel  = document.getElementById('useSubLabel');
+
+try{ tkSheetSel.addEventListener('change', runTkAutoDetect); }catch(e){}
+[tkGroupCol1, tkGroupCol2].forEach(el=>{ el?.addEventListener('input', updateGroupCheckboxState); });
+
+tkFile.addEventListener('change', e=>{
+  tkLog.textContent="";
+  const f = e.target.files[0];
+  if(!f){ buildMapBtn.disabled=true; return; }
+  const rd = new FileReader();
+  rd.onload = ev=>{
+    try{
+      tkWB = XLSX.read(new Uint8Array(ev.target.result), {type:'array'});
+      tkSheetSel.innerHTML="";
+      tkWB.SheetNames.forEach(n=>{
+        const o=document.createElement('option'); o.value=n; o.textContent=n; tkSheetSel.appendChild(o);
+      });
+      tkSheetSel.disabled=false; buildMapBtn.disabled=false;
+      log(tkLog, "To-Know 워크북 로드: " + tkWB.SheetNames.join(", "));
+      try{ runTkAutoDetect(); }catch(e){}
+    }catch(err){
+      alert("To-Know 파싱 실패: " + err.message);
+      log(tkLog, err.stack);
+    }
+  };
+  rd.readAsArrayBuffer(f);
+});
+
+/* ===== To-Know 헤더 동의어 ===== */
+const TKN_SYNONYMS = {
+  no:    ["No.", "NO", "no", "번호", "문항번호"],
+  item:  ["문항", "항목", "문항명", "Question", "질문"],
+  group: ["구분", "파트", "분류", "Category", "카테고리", "하위 구분"]
+};
+
+/* ===== To-Know 자동 감지 ===== */
+function runTkAutoDetect(){
+  try{
+    const name = tkSheetSel.value || tkWB.SheetNames[0];
+    tkWS = tkWB.Sheets[name];
+    tkAOA = safeAOA(tkWS);
+
+    let headerRowIdx = null, noColIdx=null, itemColIdx=null, groupColIdxs=[];
+    const scanRows = Math.min(10, tkAOA.length);
+
+    const matchOne = (row, cands) => {
+      let idx = row.findIndex(x => cands.some(s => String(x||"").trim().toLowerCase() === String(s).toLowerCase()));
+      if (idx >= 0) return idx;
+      idx = row.findIndex(x => cands.some(s => String(x||"").trim().toLowerCase().includes(String(s).toLowerCase())));
+      return idx >= 0 ? idx : -1;
+    };
+
+    for(let r=0;r<scanRows;r++){
+      const row = tkAOA[r].map(v=> String(v||"").trim());
+      const noIdx   = matchOne(row, TKN_SYNONYMS.no);
+      const itemIdx = matchOne(row, TKN_SYNONYMS.item);
+      if (noIdx >= 0 && itemIdx >= 0){
+        const groups = [];
+        row.forEach((x,i)=>{
+          const name = String(x||"").trim();
+          if (!name) return;
+          const isGroup = TKN_SYNONYMS.group.some(s =>
+            name.toLowerCase() === String(s).toLowerCase() ||
+            name.toLowerCase().includes(String(s).toLowerCase())
+          );
+          if (isGroup) groups.push(i);
+        });
+        headerRowIdx = r;
+        noColIdx     = noIdx;
+        itemColIdx   = itemIdx;
+        groupColIdxs = groups.slice(0,2);
+        break;
+      }
+    }
+    if(headerRowIdx===null){
+      const hdrWrap = tkHeaderRowInp ? (tkHeaderRowInp.closest('label') || tkHeaderRowInp.parentElement) : null;
+      if (hdrWrap) hdrWrap.style.display = '';
+      if (tkDetectSummary){
+        tkDetectSummary.textContent = "헤더 행을 자동으로 감지하지 못했습니다. 엑셀에서 'No.'와 '문항' 헤더가 한 줄에 있고 병합셀이 해제되어 있는지 확인한 뒤, 필요하면 위 ‘헤더 행’에 엑셀 기준 행 번호를 직접 입력하세요.";
+      }
+      alert("헤더 행을 자동으로 감지하지 못했습니다.\n- 'No.'와 '문항' 헤더가 있는지 확인\n- 행/열 병합 해제 후 저장\n- 헤더가 아래쪽에 있으면 ‘헤더 행’에 엑셀 기준 행 번호를 직접 입력\n수정 후 파일을 다시 선택하거나 ‘인덱스 채우기’를 다시 시도하세요.");
+      log(tkLog, "자동 감지 실패: 헤더를 찾지 못함(사용자 안내 표시).");
+      return;
+    }
+
+    const startCol = getSheetStartCol(tkWS);
+
+    tkHeaderRowInp.value = String(headerRowIdx+1);
+    const hdrWrap = tkHeaderRowInp ? (tkHeaderRowInp.closest('label') || tkHeaderRowInp.parentElement) : null;
+    if (hdrWrap) hdrWrap.style.display = 'none';
+
+    tkNoColInp.value     = idxToColName(noColIdx   + startCol);
+    tkItemColInp.value   = idxToColName(itemColIdx + startCol);
+
+    const g1 = groupColIdxs[0] != null ? idxToColName(groupColIdxs[0] + startCol) : "";
+    const g2 = groupColIdxs[1] != null ? idxToColName(groupColIdxs[1] + startCol) : "";
+    if (tkGroupCol1) tkGroupCol1.value = g1;
+    if (tkGroupCol2) tkGroupCol2.value = g2;
+
+    const g1T = g1 ? `${g1}("${String(tkAOA[headerRowIdx][groupColIdxs[0]]).trim()}")` : "(없음)";
+    const g2T = g2 ? `${g2}("${String(tkAOA[headerRowIdx][groupColIdxs[1]]).trim()}")` : "(없음)";
+    const noT = `${idxToColName(noColIdx+startCol)}("${tkAOA[headerRowIdx][noColIdx]}")`;
+    const itT = `${idxToColName(itemColIdx+startCol)}("${tkAOA[headerRowIdx][itemColIdx]}")`;
+    if (tkDetectSummary){
+      tkDetectSummary.textContent = `No. 열: ${noT} • 문항 열: ${itT} • 구분 열: ${g1T} • 하위 구분 열: ${g2T}`;
+    }
+
+    updateGroupCheckboxState();
+    log(tkLog, `감지됨 → No.: ${noT} | 구분: ${g1T}, 하위 구분: ${g2T} | 문항: ${itT}`);
+  }catch(err){
+    log(tkLog, "자동 감지 오류: " + err.message);
+  }
+}
+
+/* ===== To-Know 옵션 상태 동기화 ===== */
+function updateGroupCheckboxState(){
+  try{
+    const hasGroup = !!(tkGroupCol1 && tkGroupCol1.value.trim());
+    const hasSub   = !!(tkGroupCol2 && tkGroupCol2.value.trim());
+    if(!hasGroup){
+      if(useGroupPref){ useGroupPref.checked=false; useGroupPref.disabled=true; }
+      if(useSubLabel){  useSubLabel.checked=false;  useSubLabel.disabled=true;  }
+      return;
+    }else{
+      if(useGroupPref) useGroupPref.disabled=false;
+      if(useSubLabel)  useSubLabel.disabled = !hasSub;
+      if(!hasSub && useSubLabel) useSubLabel.checked=false;
+    }
+    function syncMutex(ev){
+      if(!useGroupPref || !useSubLabel) return;
+      if(useGroupPref.checked && ev && ev.target===useGroupPref){ useSubLabel.checked=false; }
+      if(useSubLabel.checked  && ev && ev.target===useSubLabel){  useGroupPref.checked=false; }
+    }
+    useGroupPref?.removeEventListener('change', syncMutex);
+    useSubLabel?.removeEventListener('change', syncMutex);
+    useGroupPref?.addEventListener('change', syncMutex);
+    useSubLabel?.addEventListener('change', syncMutex);
+  }catch(e){}
+}
+
+/* ===== To-Know 인덱스 맵 생성 ===== */
+buildMapBtn.addEventListener('click', ()=>{
+  try{
+    const name = tkSheetSel.value || tkWB.SheetNames[0];
+    tkWS = tkWB.Sheets[name];
+    tkAOA = safeAOA(tkWS);
+
+    const header1 = Number(tkHeaderRowInp.value) || 2;
+    const headIdx = header1 - 1;
+
+    const startCol = getSheetStartCol(tkWS);
+
+    const noCol   = colNameToIdx((tkNoColInp.value   || "D").trim()) - startCol;
+    const itemCol = colNameToIdx((tkItemColInp.value || "E").trim()) - startCol;
+
+    const g1 = colNameToIdx((tkGroupCol1?.value||"").trim());
+    const g2 = colNameToIdx((tkGroupCol2?.value||"").trim());
+    let groupCols = [g1, g2].map(x => (x==null? null : x - startCol)).filter(x=>x!==null);
+
+    const hdr = tkAOA[headIdx] || [];
+    const g1Lbl = groupCols[0] != null ? `${idxToColName(groupCols[0]+startCol)}=${hdr[groupCols[0]]}` : "(없음)";
+    const g2Lbl = groupCols[1] != null ? `${idxToColName(groupCols[1]+startCol)}=${hdr[groupCols[1]]}` : "(없음)";
+    log(tkLog, `선택된 헤더 → No.: ${idxToColName(noCol+startCol)}=${hdr[noCol]}  |  구분: ${g1Lbl} , 하위 구분: ${g2Lbl}  |  문항: ${idxToColName(itemCol+startCol)}=${hdr[itemCol]}`);
+
+    for (const ci of groupCols){ forwardFillColumn(tkAOA, ci); }
+
+    const errs = validateToKnow(tkAOA, headIdx, noCol, itemCol, groupCols);
+    if (errs.length){
+      alert("To-Know 유효성 검사 오류:\n- " + errs.join("\n- "));
+      log(tkLog, "유효성 검사 실패:\n" + errs.join("\n"));
+      return;
+    }
+
+    const norm = (s)=> String(s ?? "").trim().replace(/\s+/g, " ").replace(/[\,\/\\\|\:\;]+/g, "_");
+    tkMap = {};
+    for(let r=headIdx+1; r<tkAOA.length; r++){
+      const noRaw = tkAOA[r][noCol];
+      const item  = norm(tkAOA[r][itemCol]);
+      const noNum = Number(noRaw);
+      if(!Number.isFinite(noNum)) continue;
+      const q = `Q${noNum}`;
+
+      let prefixParts=[];
+      if(useGroupPref.checked){
+        if (groupCols[0] != null){
+          const v1 = norm(tkAOA[r][groupCols[0]]);
+          if (v1) prefixParts.push(v1);
+        }
+        if (useSubLabel.checked && groupCols[1] != null){
+          const v2 = norm(tkAOA[r][groupCols[1]]);
+          if (v2) prefixParts.push(v2);
+        }
+      }
+      let indexText = "";
+      if(prefixParts.length){
+        indexText = prefixParts.join("_");
+        if(item) indexText += "_" + item;
+      }else{
+        indexText = item || "";
+      }
+      tkMap[q] = indexText;
+    }
+
+    log(tkLog, `인덱스 맵 생성 완료 (항목 수: ${Object.keys(tkMap).length})`);
+
+    if(summary?.length){
+      for(const row of summary){
+        const key = row["Q번호"];
+        if(tkMap[key]) row["항목명(인덱스)"] = tkMap[key];
+      }
+      renderSummary();
+    }
+  }catch(err){
+    alert("To-Know 인덱스 맵 생성 오류: " + err.message);
+    log(tkLog, err.stack);
+  }
+});
+
+/* ===== To-Know 유효성 검사 ===== */
+function forwardFillColumn(rows, colIndex){
+  if (colIndex == null) return;
+  let last = "";
+  for (let i=0;i<rows.length;i++){
+    const v = String(rows[i][colIndex] ?? "").trim();
+    if (v !== "") last = v;
+    else if (last !== "") rows[i][colIndex] = last;
+  }
+}
+function validateToKnow(tkAOA, headIdx, noCol, itemCol, groupCols){
+  const errs = [];
+  const seen = new Map();
+  const nos  = [];
+  for(let r=headIdx+1; r<tkAOA.length; r++){
+    const row = tkAOA[r] || [];
+    const noRaw = row[noCol];
+    const item  = String(row[itemCol]||"").trim();
+    const hasNo = (noRaw !== undefined && noRaw !== null && String(noRaw).trim()!=="");
+    const noNum = Number(noRaw);
+
+    if (item === "") errs.push(`문항 오류: 공란 (행 ${r+1})`);
+    if (item !== "" && !hasNo) errs.push(`오류: 문항은 있는데 No. 없음 (행 ${r+1})`);
+    const hasAnyGroup = groupCols.some(ci => String(row[ci]||"").trim()!=="");
+    if (hasAnyGroup && item==="") errs.push(`오류: 구분만 있고 문항 없음 (행 ${r+1})`);
+
+    if (hasNo && Number.isFinite(noNum)) {
+      nos.push(noNum);
+      seen.set(noNum, (seen.get(noNum)||0)+1);
+      if (noNum > 50) errs.push(`No. 오류: 50 초과 (${noNum}) (행 ${r+1})`);
+    } else if (hasNo) {
+      errs.push(`No. 오류: 숫자가 아님 (행 ${r+1})`);
+    }
+  }
+  if (nos.length){
+    const uniq = Array.from(new Set(nos)).sort((a,b)=>a-b);
+    const max  = Math.max(...uniq);
+    const expected = Array.from({length: max}, (_,i)=> i+1);
+    const missing  = expected.filter(x => !uniq.includes(x));
+    for (const [k,c] of seen.entries()){ if (c>1) errs.push(`No. 오류: 중복 번호 ${k}`); }
+    if (missing.length) errs.push(`No. 오류: 누락 번호 ${missing.join(", ")}`);
+  }
+  return errs;
+}
+
+/* ===== Raw 구조 인식 & 요약 생성 ===== */
+parseRawBtn.addEventListener('click', ()=>{
+  try{
+    const name = rawSheetSel.value || rawWB.SheetNames[0];
+    rawWS = rawWB.Sheets[name];
+    rawAOA = safeAOA(rawWS);
+    log(rawLog, `[${name}] 원본: 행=${rawAOA.length}, 첫행 열수=${(rawAOA[0]?rawAOA[0].length:0)}`);
+
+    if(!rawAOA || rawAOA.length<=Math.max(...RAW_HEADER_ROWS)){
+      alert("시트가 비었거나 헤더(1,2행)가 없습니다.");
+      return;
+    }
+
+    // A~D 제거 → 메타 4열을 0~3 인덱스로 고정
+    rawAOA = rawAOA.map(row => row.slice(4));
+    log(rawLog, "A~D 열 삭제 적용.");
+
+    // 메타 4열 강제 헤더 (E~H → 0~3)
+    const L0 = rawAOA[0] || [];
+    const L1 = rawAOA[1] || [];
+    const fixed = ["성별","연령(1세단위)","연령(10세단위)","지역"];
+    for(let i=0;i<4;i++){ if(L0.length>i) L0[i]=fixed[i]; if(L1.length>i) L1[i]=""; }
+    log(rawLog, "E~H 강제 헤더 지정 완료: "+fixed.join(", "));
+
+    // 헤더 행 보정
+    const h0raw = rawAOA[0] || [];
+    const h1raw = rawAOA[1] || [];
+    const maxLen = Math.max(h0raw.length, h1raw.length);
+    const h0 = Array.from({length:maxLen}, (_,i)=> String(h0raw[i] ?? ""));
+    const h1 = Array.from({length:maxLen}, (_,i)=> String(h1raw[i] ?? ""));
+
+    rawColumns = h0.map((qtext,i)=> ({ qtext, var:h1[i], colIndex:i }));
+    rawRows = rawAOA.slice(Math.max(...RAW_HEADER_ROWS) + 1);
+
+    // Q별 그룹핑
+    rawColsByQ = {};
+    for(const col of rawColumns){
+      const q = extractQnumFromQtext(col.qtext) || extractQnumFromVar(col.var);
+      if(!q) continue;
+      (rawColsByQ[q] ||= []).push(col);
+    }
+    for(const q of Object.keys(rawColsByQ)){
+      rawColsByQ[q] = rawColsByQ[q].filter(v=> v && typeof v.qtext==='string' && typeof v.var==='string');
+      if(rawColsByQ[q].length===0) delete rawColsByQ[q];
+    }
+
+    // 요약(응답방식/보기/인덱스)
+    summary = [];
+    const sortedQs = Object.keys(rawColsByQ).sort((a,b)=>Number(a.slice(1))-Number(b.slice(1)));
+    for(const q of sortedQs){
+      const vars = rawColsByQ[q];
+      const candidates = vars.map(v=>v.qtext).filter(s=> s && String(s).trim()!=="");
+      const qtext = mode(candidates) || candidates[0] || "";
+      const rtype = detectResponseType(qtext, vars);
+      const options = buildOptionLabels(q, qtext, vars, rtype);
+      const idx = tkMap[q] || "";
+      summary.push({ "Q번호":q, "문항문":qtext, "응답방식":rtype, "항목명(인덱스)":idx, "보기(요약)":options });
+    }
+
+    renderSummary();
+    applyBtn.disabled=false;
+    const _btn=document.getElementById('aiNameBtn'); if(_btn) _btn.disabled=false;
+    log(rawLog, "설문 구조 확인 완료. (To-Know 미지정 시 인덱스 칸은 비어 있음)");
+  }catch(err){
+    alert("구조 인식 오류: " + err.message);
+    log(rawLog, err.stack);
+  }
+});
+
+/* ===== 응답유형 판정 ===== */
+const SPECIAL_CODE_SET = new Set(["99","100"]);
+function isSpecialCode(s){ return SPECIAL_CODE_SET.has(String(s).trim()); }
+function hasRankKeyword(qtext){ return (typeof qtext === "string") && /(순위|몇\s*위|순서대로|우선순위|랭크)/.test(qtext); }
+function codesAreNumeric(varCodeObj){
+  const col = varCodeObj.colIndex; let seen = false;
+  for (const r of rawRows){
+    const s = toStr(r?.[col]); if (s==="") continue;
+    seen = true; if (!/^\d+$/.test(s)) return false;
+  }
+  return seen;
+}
+function detectResponseType(qtext, varsForQ){
+  varsForQ = (varsForQ||[]).filter(v=> v && typeof v.var==='string');
+  if(!varsForQ.length) return "모르겠음";
+
+  const qFromVar = varsForQ.map(v=>extractQnumFromVar(v.var)).find(Boolean) || "";
+  const hasBaseCode = varsForQ.find(v=> v.var===qFromVar);
+  const hasBaseText = varsForQ.find(v=> v.var===`${qFromVar}(TEXT)`);
+
+  if (varsForQ.some(v => /^Q\d+_\d+\.\s*/.test(v.var))) return "리커트척도(Matrix)";
+
+  const codeColsByN = {};
+  const textColsByN = {};
+  for (const v of varsForQ) {
+    let m = v.var.match(new RegExp('^'+qFromVar+'_(\\d+)$')); if (m) codeColsByN[m[1]] = v.colIndex;
+    m = v.var.match(new RegExp('^'+qFromVar+'_(\\d+)\\(TEXT\\)$')); if (m) textColsByN[m[1]] = v.colIndex;
+    m = v.var.match(new RegExp('^'+qFromVar+'_(\\d+)\\.\\s*.*?\\s*\\(TEXT\\)$')); if (m && textColsByN[m[1]] == null) textColsByN[m[1]] = v.colIndex;
+  }
+  const ns = Object.keys({ ...codeColsByN, ...textColsByN }).sort((a,b)=>Number(a)-Number(b));
+
+  if (ns.length){
+    let hasRankNumber = false;
+    let isAllCodeEqualOwnN = true;
+    for (const n of ns){
+      const ccol = codeColsByN[n];
+      if (ccol == null) continue;
+      for (const r of rawRows){
+        const s = toStr(r?.[ccol]);
+        if (s==="") continue;
+        if (/^\d+$/.test(s)){
+          if (isSpecialCode(s)) { continue; }
+          if (s !== String(n)) { hasRankNumber = true; isAllCodeEqualOwnN = false; }
+        } else {
+          isAllCodeEqualOwnN = false;
+        }
+      }
+    }
+    if (hasRankNumber) return "순위응답";
+    if (isAllCodeEqualOwnN) return "중복응답";
+    if (hasRankKeyword(qtext)) return "순위응답";
+    return "중복응답";
+  }
+
+  if (hasBaseCode && hasBaseText){
+    if (isOpenByAllBlankBase(hasBaseCode) && hasAnyTextPresent(hasBaseText)) return "오픈응답";
+    if (isLikertCodeRange(hasBaseCode) && hasAnyEllipsisText(hasBaseText)) return "리커트척도(단일)";
+    if (codesAreNumeric(hasBaseCode) && !hasAnyEllipsisText(hasBaseText)) return "단일응답";
+    return "단일응답";
+  }
+
+  if (typeof qtext==="string" && /(자유롭게|기재해주|작성해주|적어주)/.test(qtext)) return "오픈응답";
+  return "모르겠음";
+}
+
+/* ===== 보기(요약) 생성 ===== */
+function buildOptionLabels(q, qtext, varsForQ, rtype){
+  const trim = (s)=> String(s==null ? "" : s).trim();
+
+  if (rtype === "리커트척도(Matrix)") {
+    const out = {};
+    for (const v of varsForQ) {
+      const m = v.var.match(new RegExp('^'+q+'_(\\d+)\\.\\s*(.*?)(?:\\s*\\(TEXT\\))?$'));
+      if (m && !/\(TEXT\)$/.test(v.var)) out[m[1]] = trim(m[2]);
+    }
+    return out;
+  }
+
+  if (rtype === "중복응답") {
+    const textColByN = {};
+    const codeColByN = {};
+    for (const v of varsForQ) {
+      let m = v.var.match(new RegExp('^'+q+'_(\\d+)$')); if (m) codeColByN[m[1]] = v.colIndex;
+      m = v.var.match(new RegExp('^'+q+'_(\\d+)\\(TEXT\\)$')); if (m) { textColByN[m[1]] = v.colIndex; continue; }
+      m = v.var.match(new RegExp('^'+q+'_(\\d+)\\.\\s*.*?\\s*\\(TEXT\\)$')); if (m && textColByN[m[1]] == null) textColByN[m[1]] = v.colIndex;
+    }
+
+    const out = {};
+    const ns = Object.keys({ ...textColByN, ...codeColByN }).sort((a,b)=>Number(a)-Number(b));
+    for (const n of ns) {
+      const codeCol = codeColByN[n];
+      const textCol = textColByN[n];
+
+      let has99 = false;
+      if (codeCol != null) {
+        for (const r of rawRows) { if (trim(r?.[codeCol]) === "99") { has99 = true; break; } }
+      }
+      if (has99) { out[n] = "기타"; continue; }
+
+      if (textCol != null) {
+        for (const r of rawRows) {
+          const s = trim(r?.[textCol]);
+          if (s !== "") { out[n] = s; break; }
+        }
+      }
+    }
+    return out;
+  }
+
+  if (rtype === "순위응답") {
+    const textColByN = {};
+    for (const v of varsForQ) {
+      let m = v.var.match(new RegExp('^'+q+'_(\\d+)\\(TEXT\\)$')); if (m) { textColByN[m[1]] = v.colIndex; continue; }
+      m = v.var.match(new RegExp('^'+q+'_(\\d+)\\.\\s*.*?\\s*\\(TEXT\\)$')); if (m && textColByN[m[1]] == null) textColByN[m[1]] = v.colIndex;
+    }
+    const out = {};
+    const ns = Object.keys(textColByN).sort((a,b)=>Number(a)-Number(b));
+    for (const n of ns) {
+      const col = textColByN[n];
+      const uniq = new Set();
+      for (const r of rawRows) {
+        const s = trim(r?.[col]);
+        if (s !== "") uniq.add(s);
+        if (uniq.size > 1) break;
+      }
+      if (uniq.size === 0) continue;
+      if (uniq.size > 1) out[n] = "기타"; else out[n] = Array.from(uniq)[0];
+    }
+    return out;
+  }
+
+  if (rtype === "단일응답" || rtype === "리커트척도(단일)") {
+    const baseCode = varsForQ.find(v => v.var === q);
+    const baseText = varsForQ.find(v => v.var === q + "(TEXT)");
+    const out = {};
+    if (!baseCode || !baseText) return out;
+
+    const cIdx = baseCode.colIndex;
+    const tIdx = baseText.colIndex;
+    const bucket = new Map();
+    for (const r of rawRows) {
+      const codeStr = toStr(r?.[cIdx]);
+      const textStr = toStr(r?.[tIdx]);
+      if (codeStr === "" || textStr === "") continue;
+      if (!bucket.has(codeStr)) bucket.set(codeStr, new Set());
+      bucket.get(codeStr).add(textStr);
+    }
+    for (const [code, texts] of bucket.entries()) {
+      if (rtype === "단일응답" && texts.size > 1) out[code] = "기타";
+      else out[code] = Array.from(texts)[0];
+    }
+    return out;
+  }
+  return {};
+}
+
+/* ===== 라벨 없음 옵션 탐지 (중복/순위만) ===== */
+function getMissingOptionNs(q, rtype, options){
+  if(!(rtype==="중복응답" || rtype==="순위응답")) return [];
+  const vars = rawColsByQ[q] || [];
+  const ns = new Set();
+  for(const v of vars){
+    if(typeof v.var !== "string") continue;
+    const m = v.var.match(new RegExp("^"+q+"_(\\d+)$"));
+    if(m) ns.add(m[1]);
+  }
+  const miss = [];
+  ns.forEach(n=>{
+    if(options && Object.prototype.hasOwnProperty.call(options, n)) return;
+    miss.push(n);
+  });
+  return miss.sort((a,b)=> Number(a)-Number(b));
+}
+
+/* ===== 요약 테이블 렌더링 =====
+   - 보기(요약)에 없는 옵션 n은 '라벨 없음'으로 표시
+   - ★ 사용자 입력칸 제공: 각 n에 대한 보기명을 사전에 지정
+*/
+function renderSummary(){
+  const tbody = document.querySelector('#summaryTable tbody');
+  tbody.innerHTML="";
+  const types = ["단일응답","중복응답","순위응답","리커트척도(Matrix)","리커트척도(단일)","오픈응답","모르겠음"];
+
+  summary.forEach(row=>{
+    const q = row["Q번호"];
+    const tr=document.createElement('tr');
+
+    const tdQ=document.createElement('td'); tdQ.textContent=q; tr.appendChild(tdQ);
+    const tdStem=document.createElement('td'); tdStem.textContent=row["문항문"]; tr.appendChild(tdStem);
+
+    const tdType=document.createElement('td');
+    const sel=document.createElement('select');
+    types.forEach(t=>{
+      const o=document.createElement('option'); o.value=t; o.textContent=t;
+      if(t===row["응답방식"]) o.selected=true;
+      sel.appendChild(o);
+    });
+    sel.addEventListener('change', ()=>{ row["응답방식"]=sel.value; renderSummary(); });
+    tdType.appendChild(sel); tr.appendChild(tdType);
+
+    const tdIdx=document.createElement('td');
+    const inp=document.createElement('input'); inp.type="text"; inp.value=row["항목명(인덱스)"]||"";
+    inp.addEventListener('input', ()=>{ row["항목명(인덱스)"]=inp.value; });
+    tdIdx.appendChild(inp); tr.appendChild(tdIdx);
+
+    const tdOpts=document.createElement('td');
+    {
+      const map = row["보기(요약)"] || {};
+      const pretty = Object.keys(map)
+        .sort((a, b) => Number(a) - Number(b))
+        .map(n => `(${n})${map[n]}`)
+        .join(", ");
+      tdOpts.innerHTML = `<span class="mono">${escapeHtml(pretty)}</span>`;
+    }
+
+    const missingNs = getMissingOptionNs(q, row["응답방식"], row["보기(요약)"]);
+    if (missingNs.length){
+      tdOpts.classList.add('flag-missing');
+      tdOpts.insertAdjacentHTML('beforeend',
+        `<div style="margin-top:6px">
+           <span class="badge-missing">라벨 없음</span>
+           <span class="muted"> ${missingNs.join(", ")} → 미입력 시 '옵션n'으로 표시됩니다.</span>
+         </div>`);
+
+      // ★ 사용자 입력칸: 각 n에 대한 임시 라벨(추출 시 반영)
+      const edit = document.createElement('div');
+      edit.className = 'missing-editor';
+      for (const n of missingNs){
+        const box = document.createElement('input');
+        box.type = 'text';
+        box.placeholder = `옵션${n}`;
+        box.value = manualOptionLabels[q]?.[n] || "";
+        box.addEventListener('input', ()=>{
+          if (!manualOptionLabels[q]) manualOptionLabels[q] = {};
+          manualOptionLabels[q][n] = box.value.trim();
+        });
+        const wrap = document.createElement('label');
+        wrap.style.display = 'inline-flex';
+        wrap.style.alignItems = 'center';
+        wrap.style.gap = '6px';
+        const tag = document.createElement('span');
+        tag.className = 'muted';
+        tag.textContent = `(${n})`;
+        wrap.appendChild(tag);
+        wrap.appendChild(box);
+        edit.appendChild(wrap);
+      }
+      tdOpts.appendChild(edit);
+    }
+
+    tr.appendChild(tdOpts);
+    tbody.appendChild(tr);
+  });
+}
+
+/* ===== 헤더 적용 & 파일 다운로드 =====
+   - manualOptionLabels에 입력된 값이 있으면, 보기 라벨로 우선 사용
+   - 없으면 기존 로직대로 옵션n 처리
+*/
+applyBtn.addEventListener('click', ()=>{
+  try{
+    if (typeof XLSX === 'undefined') { alert("XLSX 라이브러리를 찾을 수 없습니다."); return; }
+    if (!Array.isArray(rawAOA) || rawAOA.length < 2) { alert("Raw 데이터가 로드되지 않았습니다."); return; }
+    if (!Array.isArray(rawColumns) || rawColumns.length === 0) { alert("구조 인식 결과가 없습니다."); return; }
+    if (!Array.isArray(summary) || summary.length === 0) { alert("요약(summary)이 비어 있습니다."); return; }
+
+    const h0raw = Array.isArray(rawAOA[0]) ? rawAOA[0] : [];
+    const h1raw = Array.isArray(rawAOA[1]) ? rawAOA[1] : [];
+    const maxLen = Math.max(h0raw.length, h1raw.length);
+    const newH0 = Array.from({length:maxLen}, (_,i)=> String(h0raw[i] ?? ""));
+    const newH1 = Array.from({length:maxLen}, (_,i)=> String(h1raw[i] ?? ""));
+
+    const summaryByQ = {};
+    for (const row of summary) summaryByQ[row["Q번호"]] = row;
+    const getOptionsMap = (q) => (summaryByQ[q] ? (summaryByQ[q]["보기(요약)"] || {}) : {});
+    const getIndexName = (q) => (summaryByQ[q] ? (summaryByQ[q]["항목명(인덱스)"] || "") : "");
+    const trim = (s)=> String(s==null?"":s).trim();
+
+    for (const col of rawColumns){
+      const vname = String(col.var ?? "");
+      const q = extractQnumFromQtext(col.qtext) || extractQnumFromVar(vname);
+      if(!q || !summaryByQ[q]){ 
+        newH0[col.colIndex] = String(h0raw[col.colIndex] ?? "");
+        newH1[col.colIndex] = String(h1raw[col.colIndex] ?? "");
+        continue;
+      }
+
+      const rtype = summaryByQ[q]["응답방식"];
+      const idxName = getIndexName(q);
+      const options = getOptionsMap(q);
+
+      let L0 = String(h0raw[col.colIndex] ?? "");
+      let L1 = String(h1raw[col.colIndex] ?? "");
+
+      // helper: 선택된 수기 라벨 우선 적용
+      const pickLabel = (q, n, fallback) => {
+        const manual = manualOptionLabels[q]?.[n];
+        return (options[n] || (manual && manual.trim()) || fallback);
+      };
+
+      if (rtype === "리커트척도(Matrix)") {
+        const m = vname.match(new RegExp('^'+q+'_(\\d+)(?:\\.|\\(TEXT\\))?'));
+        if (m){
+          const n = m[1];
+          const isText = /\(TEXT\)$/.test(vname);
+          let label = options[n];
+          if (!label) {
+            const m2 = vname.match(new RegExp('^'+q+'_'+n+'\\.\\s*(.*?)(?:\\s*\\(TEXT\\))?$'));
+            label = m2 ? trim(m2[1]) : pickLabel(q, n, `옵션${n}`);
+          }
+          L0 = `${q}. ${idxName ? idxName + "_" : ""}${label}`;
+          L1 = isText ? "(TEXT)" : "";
+        }
+
+      } else if (rtype === "중복응답" || rtype === "순위응답") {
+        const isText = /\(TEXT\)$/.test(vname);
+        const mCode = vname.match(new RegExp('^'+q+'_(\\d+)$'));
+        const mText = vname.match(new RegExp('^'+q+'_(\\d+)\\(TEXT\\)$'));
+        if (mCode || mText) {
+          const n = (mCode ? mCode[1] : mText[1]);
+          const label = pickLabel(q, n, `옵션${n}`);
+          L0 = `${q}. ${idxName ? idxName + "_" : ""}${label}`;
+          L1 = isText ? "(TEXT)" : (rtype === "순위응답" ? "(순위)" : "(선택)");
+        }
+
+      } else if (rtype === "단일응답" || rtype === "리커트척도(단일)") {
+        if (vname === q) {
+          L0 = `${q}. ${idxName || ""}`; L1 = "(코드)";
+        } else if (vname === `${q}(TEXT)`) {
+          L0 = `${q}. ${idxName || ""}`; L1 = "(TEXT)";
+        } else {
+          const m = vname.match(new RegExp('^'+q+'_(\\d+)(?:\\(TEXT\\))?$'));
+          if (m) {
+            const n = m[1];
+            const isText = /\(TEXT\)$/.test(vname);
+            const label = pickLabel(q, n, `옵션${n}`);
+            L0 = `${q}. ${idxName ? idxName + "_" : ""}${label}`;
+            L1 = isText ? "(TEXT)" : "";
+          }
+        }
+
+      } else if (rtype === "오픈응답") {
+        if (vname === q) {
+          L0 = `${q}. ${idxName || ""}`; L1 = "(코드)";
+        } else if (vname === `${q}(TEXT)`) {
+          L0 = `${q}. ${idxName || ""}`; L1 = "(TEXT)";
+        }
+      }
+      newH0[col.colIndex] = L0;
+      newH1[col.colIndex] = L1;
+    }
+
+    const dataStartRow = 2;
+    let flatHeader = newH0.map((a,i)=> a + (newH1[i] ? newH1[i] : ""));
+    flatHeader = flatHeader.map(h => h.replace(/\s*\((선택|순위|코드)\)\s*$/gi, ""));
+    const dataAoA = [ flatHeader, ...rawAOA.slice(dataStartRow) ];
+
+    const codeOnly = document.getElementById('optCodeOnly')?.checked;
+    const textOnly = document.getElementById('optTextOnly')?.checked;
+
+    const keepIdxs = [];
+    for (let i = 0; i < flatHeader.length; i++) {
+      const isMeta = i < 4;
+      const isText = /\(TEXT\)$/i.test(flatHeader[i]);
+      if (!codeOnly && !textOnly) { keepIdxs.push(i); continue; }
+      if (codeOnly && (isMeta || !isText)) keepIdxs.push(i);
+      if (textOnly && (isMeta ||  isText)) keepIdxs.push(i);
+    }
+    const filteredAoA = dataAoA.map(row => keepIdxs.map(i => row[i]));
+
+    const outWB = XLSX.utils.book_new();
+    const wsData = XLSX.utils.aoa_to_sheet(filteredAoA);
+    XLSX.utils.book_append_sheet(outWB, wsData, "data");
+
+    let fname = "raw_renamed.xlsx";
+    if (codeOnly) fname = "raw_renamed_code.xlsx";
+    if (textOnly) fname = "raw_renamed_text.xlsx";
+    XLSX.writeFile(outWB, fname);
+  }catch(err){
+    console.error('[apply] 처리 중 오류:', err);
+    alert("헤더 적용 중 오류가 발생했습니다.\n브라우저 콘솔(F12)에서 오류 메시지를 확인해 주세요.");
+  }
+});
+
+/* ===== AI 인덱스 자동 생성 (프록시만 사용) ===== */
+async function aiFillIndexNamesIfEmpty(){
+  const aiBtn = document.getElementById('aiNameBtn');
+  const oldBtnText = aiBtn ? aiBtn.textContent : '';
+  if (aiBtn) { aiBtn.disabled = true; aiBtn.textContent = '생성 중…'; }
+
+  try {
+    if (!Array.isArray(summary) || summary.length === 0) {
+      alert("먼저 '설문 구조 확인'을 실행해 요약을 만든 뒤 시도하세요.");
+      return;
+    }
+
+    const sys = "너는 소비자조사 설문 전문가야. 사용자가 인덱스만 보고도 해당 문항이 어떤 문항인지 알 수 있게, 아주 짧고 명료한 한국어 인덱스(최대 20자)를 지어줘. 각 문항의 인덱스는 가능한 서로 다르게 지어져야 해. Q번호나 숫자, 특수기호를 붙이지 말고, 문항이 조사하고자 하는 바가 무엇인지 잘 드러나게 지어줘. 문항 내에 카테고리명이나 브랜드명이 감지되는 경우 그것도 인덱스명에 드러나도록 작성해줘(ex. '귀하께서 오늘 이전 국내 기업으로 알고 계셨던 브랜드를 모두 선택해주세요' --> 국내기업 보조인지도, '음료수 하면 떠오르는 브랜드를 한가지만 작성해주세요' --> 음료수 최초상기... 등)";
+    const MODEL_FOR_PROXY = "gpt-4o-mini"; //
+
+    log(tkLog, `AI 인덱스 생성 시작: 0 / ${summary.length}`);
+
+    for (let i = 0; i < summary.length; i++) {
+      log(tkLog, `AI 인덱스 생성: ${i+1} / ${summary.length}`);
+      const r = summary[i];
+      if (String(r["항목명(인덱스)"]||"").trim() !== "") continue;
+
+      const userPayload = JSON.stringify({
+        Q번호: r["Q번호"],
+        문항문: r["문항문"],
+        응답방식: r["응답방식"],
+        보기요약: r["보기(요약)"]
+      });
+
+      let named = "";
+      try {
+        const preq = {
+          method: "POST",
+          headers: Object.assign(
+            { "Content-Type": "application/json" },
+            TEAM_TOKEN ? { "x-team-token": TEAM_TOKEN } : {}
+          ),
+          body: JSON.stringify({
+            model: MODEL_FOR_PROXY,
+            prompt: {
+              system: sys,
+              user: `아래 문항에 대한 '항목명(인덱스)'를 한 개만 제시해줘.\n${userPayload}\n\n출력형식: 인덱스만 딱 한 줄`
+            },
+            maxTokens: 50
+          })
+        };
+        const presp = await fetch(AI_PROXY_PATH, preq);
+        if (!presp.ok) throw new Error(`HTTP ${presp.status}`);
+        const pdata = await presp.json();
+
+        named = (pdata?.choices?.[0]?.message?.content || pdata?.text || pdata?.content || "").trim();
+        named = named.replace(/^[\"'「『]|[\"'」』]$/g, "").split(/\r?\n/)[0].trim();
+        if (named.length > 20) named = named.slice(0, 20);
+        if (!named) named = makeIndexNameMinimal(r["Q번호"], r["문항문"]);
+      } catch (e) {
+        log(tkLog, `[AI 프록시 오류] ${e?.message || e}`);
+        named = makeIndexNameMinimal(r["Q번호"], r["문항문"]);
+      }
+
+      r["항목명(인덱스)"] = named;
+    }
+
+    // 중복 인덱스 접미사 처리(현행 유지)
+    const count = {};
+    for (const r of summary) {
+      const base = r["항목명(인덱스)"];
+      count[base] = (count[base] || 0) + 1;
+      if (count[base] > 1) r["항목명(인덱스)"] = `${base} (${count[base]})`;
+    }
+
+    renderSummary();
+    log(tkLog, `AI 인덱스 생성 완료: ${summary.length} / ${summary.length}`);
+    alert("AI 보완 완료: 비어 있던 인덱스 칸을 채웠습니다.");
+  } finally {
+    // ★ 어떤 경로여도 버튼 복구
+    if (aiBtn) { aiBtn.disabled = false; aiBtn.textContent = oldBtnText; }
+  }
+}
+
+/* ===== 이벤트 바인딩 ===== */
+document.getElementById('aiNameBtn')?.addEventListener('click', aiFillIndexNamesIfEmpty);
+
+/* ===== 초기 안내 배치(현행 유지) ===== */
+document.addEventListener('DOMContentLoaded', ()=>{
+  const notice = document.getElementById('brandNotice');
+  const title = document.querySelector('h1');
+  if(notice && title){ title.insertAdjacentElement('afterend', notice); }
+});
+
+/* ===== 내려받기 옵션 상호배제 (현행 유지) ===== */
+document.addEventListener('DOMContentLoaded', function () {
+  const codeOnly = document.getElementById('optCodeOnly');
+  const textOnly = document.getElementById('optTextOnly');
+  if (!codeOnly || !textOnly) return;
+  const makeExclusive = (src, other) => { if (src.checked) other.checked = false; };
+  ['change', 'click'].forEach(evt => {
+    codeOnly.addEventListener(evt, () => makeExclusive(codeOnly, textOnly));
+    textOnly.addEventListener(evt, () => makeExclusive(textOnly, codeOnly));
+  });
+});
+</script>
+</body>
+</html>
