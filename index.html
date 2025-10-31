@@ -104,14 +104,12 @@
       <select id="tkSheet" disabled></select>
     </div>
     <div class="tk-inline">
-      <div class="row smalllabels" style="margin-top:8px;">
+      <div class="row smalllabels" style="margin-top:8px; gap:8px;">
         <label style="display:none;">헤더 행: <input type="text" id="tkHeaderRow" placeholder="예: 2" style="width:90px"/></label>
-        <label>No. 열: <input type="text" id="tkNoCol" placeholder="예: D" style="width:70px"/></label>
-        <label>문항 열: <input type="text" id="tkItemCol" placeholder="예: E" style="width:70px"/></label>
-      </div>
-      <div class="row row-compact smalllabels" style="margin-top:6px;">
-        <label>구분 열: <input type="text" id="tkGroupCol1" placeholder="예: B" style="width:60px"/></label>
-        <label>하위 구분 열: <input type="text" id="tkGroupCol2" placeholder="예: C" style="width:60px"/></label>
+        <label>구분 열: <input type="text" id="tkGroupCol1" placeholder="예: B" style="width:100px"/></label>
+        <label>하위 구분 열: <input type="text" id="tkGroupCol2" placeholder="예: C" style="width:100px"/></label>
+        <label>No. 열: <input type="text" id="tkNoCol" placeholder="예: D" style="width:100px"/></label>
+        <label>문항 열: <input type="text" id="tkItemCol" placeholder="예: E" style="width:100px"/></label>
       </div>
     </div>
     <div id="tkDetectSummary" class="smallline" style="margin-top:4px;"></div>
@@ -120,7 +118,7 @@
     </div>
     <div class="row smallcheck" style="margin-top:8px;">
       <label><input type="checkbox" id="useGroupPref" checked/> 인덱스에 '구분' 포함</label>
-      <label><input type="checkbox" id="useSubLabel" checked/> 인덱스에 '구분'과 '하위 구분' 포함</label>
+      <label><input type="checkbox" id="useSubLabel"/> 인덱스에 '구분'과 '하위 구분' 포함</label>
     </div>
     <hr class="soft-hr">
     <h5 class="subsec-title" style="margin-top:10px;">AI를 통해 인덱스 생성</h5>
@@ -260,6 +258,7 @@ function extractQnumFromVar(v){
   return m ? m[1] : null;
 }
 function toStr(v){ return String(v == null ? "" : v).trim(); }
+function trim(s){ return String(s==null ? "" : s).trim(); }
 function hasAnyTextPresent(varTextObj){
   const col = varTextObj.colIndex;
   for (const r of rawRows){ if (toStr(r?.[col])!=="") return true; }
@@ -309,6 +308,33 @@ function getSheetStartCol(ws){
     return XLSX.utils.decode_range(ref).s.c | 0;
   } catch(e){ return 0; }
 }
+function makeRegExp(qVar, pattern){
+  const escaped = qVar.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp('^' + escaped + pattern);
+}
+function sortNumericKeys(obj){
+  return Object.keys(obj).sort((a,b)=>Number(a)-Number(b));
+}
+function loadExcelFile(file, onSuccess, onError){
+  const rd = new FileReader();
+  rd.onload = ev=>{
+    try{
+      const wb = XLSX.read(new Uint8Array(ev.target.result), {type:'array'});
+      onSuccess(wb);
+    }catch(err){
+      onError(err);
+    }
+  };
+  rd.readAsArrayBuffer(file);
+}
+function populateSheetSelect(workbook, selectElement, buttonElement){
+  selectElement.innerHTML="";
+  workbook.SheetNames.forEach(n=>{
+    const o=document.createElement('option'); o.value=n; o.textContent=n; selectElement.appendChild(o);
+  });
+  selectElement.disabled=false;
+  if(buttonElement) buttonElement.disabled=false;
+}
 
 /* ===== Raw 파일 업로드 처리 ===== */
 const rawFile = document.getElementById('rawFile');
@@ -320,22 +346,17 @@ rawFile.addEventListener('change', e=>{
   rawLog.textContent="";
   const f = e.target.files[0];
   if(!f){ parseRawBtn.disabled=true; return; }
-  const rd = new FileReader();
-  rd.onload = ev=>{
-    try{
-      rawWB = XLSX.read(new Uint8Array(ev.target.result), {type:'array'});
-      rawSheetSel.innerHTML="";
-      rawWB.SheetNames.forEach(n=>{
-        const o=document.createElement('option'); o.value=n; o.textContent=n; rawSheetSel.appendChild(o);
-      });
-      rawSheetSel.disabled=false; parseRawBtn.disabled=false;
+  loadExcelFile(f, 
+    (wb)=>{
+      rawWB = wb;
+      populateSheetSelect(rawWB, rawSheetSel, parseRawBtn);
       log(rawLog, "Raw 워크북 로드: " + rawWB.SheetNames.join(", "));
-    }catch(err){
+    },
+    (err)=>{
       alert("Raw 파싱 실패: " + err.message);
       log(rawLog, err.stack);
     }
-  };
-  rd.readAsArrayBuffer(f);
+  );
 });
 
 /* ===== To-Know 업로드 처리 ===== */
@@ -358,30 +379,26 @@ tkFile.addEventListener('change', e=>{
   tkLog.textContent="";
   const f = e.target.files[0];
   if(!f){ buildMapBtn.disabled=true; return; }
-  const rd = new FileReader();
-  rd.onload = ev=>{
-    try{
-      tkWB = XLSX.read(new Uint8Array(ev.target.result), {type:'array'});
-      tkSheetSel.innerHTML="";
-      tkWB.SheetNames.forEach(n=>{
-        const o=document.createElement('option'); o.value=n; o.textContent=n; tkSheetSel.appendChild(o);
-      });
-      tkSheetSel.disabled=false; buildMapBtn.disabled=false;
+  loadExcelFile(f,
+    (wb)=>{
+      tkWB = wb;
+      populateSheetSelect(tkWB, tkSheetSel, buildMapBtn);
       log(tkLog, "To-Know 워크북 로드: " + tkWB.SheetNames.join(", "));
       try{ runTkAutoDetect(); }catch(e){}
-    }catch(err){
+    },
+    (err)=>{
       alert("To-Know 파싱 실패: " + err.message);
       log(tkLog, err.stack);
     }
-  };
-  rd.readAsArrayBuffer(f);
+  );
 });
 
 /* ===== To-Know 헤더 동의어 ===== */
 const TKN_SYNONYMS = {
-  no:    ["No.", "NO", "no", "번호", "문항번호"],
-  item:  ["문항", "항목", "문항명", "Question", "질문"],
-  group: ["구분", "파트", "분류", "Category", "카테고리", "하위 구분"]
+  no:       ["No.", "NO", "no", "번호", "문항번호"],
+  item:     ["문항", "항목", "문항명", "Question", "질문"],
+  group:    ["구분", "파트", "분류", "Category", "카테고리"],
+  subgroup: ["하위구분", "하위 구분", "서브구분", "Sub"]
 };
 
 /* ===== To-Know 자동 감지 ===== */
@@ -391,7 +408,7 @@ function runTkAutoDetect(){
     tkWS = tkWB.Sheets[name];
     tkAOA = safeAOA(tkWS);
 
-    let headerRowIdx = null, noColIdx=null, itemColIdx=null, groupColIdxs=[];
+    let headerRowIdx = null, noColIdx=null, itemColIdx=null, groupColIdx=null, subgroupColIdx=null;
     const scanRows = Math.min(10, tkAOA.length);
 
     const matchOne = (row, cands) => {
@@ -401,37 +418,102 @@ function runTkAutoDetect(){
       return idx >= 0 ? idx : -1;
     };
 
-    for(let r=0;r<scanRows;r++){
+    // 1) 헤더 행 찾기: No. + 문항이 있는 행
+    for(let r=0; r<scanRows; r++){
       const row = tkAOA[r].map(v=> String(v||"").trim());
       const noIdx   = matchOne(row, TKN_SYNONYMS.no);
       const itemIdx = matchOne(row, TKN_SYNONYMS.item);
       if (noIdx >= 0 && itemIdx >= 0){
-        const groups = [];
-        row.forEach((x,i)=>{
-          const name = String(x||"").trim();
-          if (!name) return;
-          const isGroup = TKN_SYNONYMS.group.some(s =>
-            name.toLowerCase() === String(s).toLowerCase() ||
-            name.toLowerCase().includes(String(s).toLowerCase())
-          );
-          if (isGroup) groups.push(i);
-        });
         headerRowIdx = r;
         noColIdx     = noIdx;
         itemColIdx   = itemIdx;
-        groupColIdxs = groups.slice(0,2);
+        
+        // ★ 구분 열 찾기: "구분" 헤더를 가진 모든 열 찾기
+        const groupIndices = [];
+        row.forEach((cellVal, idx) => {
+          const val = String(cellVal || "").trim();
+          const isGroupHeader = TKN_SYNONYMS.group.some(s => 
+            val.toLowerCase() === String(s).toLowerCase() ||
+            val.toLowerCase().includes(String(s).toLowerCase())
+          );
+          if (isGroupHeader) {
+            groupIndices.push(idx);
+          }
+        });
+        
+        // ★ "구분" 헤더가 2개 이상 연속으로 있는 경우 처리
+        if (groupIndices.length >= 2) {
+          // 연속된 "구분" 헤더인지 확인
+          let consecutive = true;
+          for (let i = 1; i < groupIndices.length; i++) {
+            if (groupIndices[i] !== groupIndices[i-1] + 1) {
+              consecutive = false;
+              break;
+            }
+          }
+          
+          if (consecutive) {
+            // 병합셀 케이스: 첫 번째 = 구분, 두 번째 = 하위 구분
+            groupColIdx = groupIndices[0];
+            subgroupColIdx = groupIndices[1];
+            log(tkLog, `병합된 "구분" 헤더 감지: ${idxToColName(groupIndices[0])}-${idxToColName(groupIndices[groupIndices.length-1])}열 → 첫번째=구분, 두번째=하위구분`);
+          } else {
+            // 비연속: 첫 번째만 구분으로 사용
+            groupColIdx = groupIndices[0];
+            subgroupColIdx = matchOne(row, TKN_SYNONYMS.subgroup);
+          }
+        } else if (groupIndices.length === 1) {
+          // "구분" 헤더가 1개만 있음
+          groupColIdx = groupIndices[0];
+          subgroupColIdx = matchOne(row, TKN_SYNONYMS.subgroup);
+        } else {
+          // "구분" 헤더가 없음
+          groupColIdx = matchOne(row, TKN_SYNONYMS.group);
+          subgroupColIdx = matchOne(row, TKN_SYNONYMS.subgroup);
+        }
+        
         break;
       }
     }
+
     if(headerRowIdx===null){
       const hdrWrap = tkHeaderRowInp ? (tkHeaderRowInp.closest('label') || tkHeaderRowInp.parentElement) : null;
       if (hdrWrap) hdrWrap.style.display = '';
       if (tkDetectSummary){
-        tkDetectSummary.textContent = "헤더 행을 자동으로 감지하지 못했습니다. 엑셀에서 'No.'와 '문항' 헤더가 한 줄에 있고 병합셀이 해제되어 있는지 확인한 뒤, 필요하면 위 ‘헤더 행’에 엑셀 기준 행 번호를 직접 입력하세요.";
+        tkDetectSummary.textContent = "헤더 행을 자동으로 감지하지 못했습니다. 엑셀에서 'No.'와 '문항' 헤더가 한 줄에 있고 병합셀이 해제되어 있는지 확인한 뒤, 필요하면 위 '헤더 행'에 엑셀 기준 행 번호를 직접 입력하세요.";
       }
-      alert("헤더 행을 자동으로 감지하지 못했습니다.\n- 'No.'와 '문항' 헤더가 있는지 확인\n- 행/열 병합 해제 후 저장\n- 헤더가 아래쪽에 있으면 ‘헤더 행’에 엑셀 기준 행 번호를 직접 입력\n수정 후 파일을 다시 선택하거나 ‘인덱스 채우기’를 다시 시도하세요.");
+      alert("헤더 행을 자동으로 감지하지 못했습니다.\n- 'No.'와 '문항' 헤더가 있는지 확인\n- 행/열 병합 해제 후 저장\n- 헤더가 아래쪽에 있으면 '헤더 행'에 엑셀 기준 행 번호를 직접 입력\n수정 후 파일을 다시 선택하거나 '인덱스 채우기'를 다시 시도하세요.");
       log(tkLog, "자동 감지 실패: 헤더를 찾지 못함(사용자 안내 표시).");
       return;
+    }
+
+    // 2) ★ 하위 구분 열 추가 감지: 헤더가 비어있지만 구분과 No. 사이에 데이터가 있는 열
+    // (병합셀로 이미 감지되지 않은 경우에만)
+    if ((subgroupColIdx === null || subgroupColIdx === -1) && groupColIdx !== null && groupColIdx >= 0 && noColIdx >= 0) {
+      // 구분과 No. 사이의 열들을 검사
+      for (let col = groupColIdx + 1; col < noColIdx; col++) {
+        // 헤더 행은 비어있거나 "구분"이지만, 데이터 행에 값이 있는지 확인
+        const headerVal = String(tkAOA[headerRowIdx][col] || "").trim();
+        
+        // 이미 다른 용도로 인식된 열은 건너뛰기
+        if (col === groupColIdx || col === noColIdx || col === itemColIdx) continue;
+        
+        // 다음 몇 행을 검사하여 데이터가 있는지 확인
+        let hasData = false;
+        for (let r = headerRowIdx + 1; r < Math.min(headerRowIdx + 20, tkAOA.length); r++) {
+          const cellVal = String(tkAOA[r][col] || "").trim();
+          if (cellVal !== "" && cellVal !== "0") {
+            hasData = true;
+            break;
+          }
+        }
+        
+        if (hasData) {
+          subgroupColIdx = col;
+          log(tkLog, `하위 구분 열 발견: ${idxToColName(col)}열에 데이터 존재 (헤더: "${headerVal}")`);
+          break;
+        }
+      }
     }
 
     const startCol = getSheetStartCol(tkWS);
@@ -440,28 +522,30 @@ function runTkAutoDetect(){
     const hdrWrap = tkHeaderRowInp ? (tkHeaderRowInp.closest('label') || tkHeaderRowInp.parentElement) : null;
     if (hdrWrap) hdrWrap.style.display = 'none';
 
-    tkNoColInp.value     = idxToColName(noColIdx   + startCol);
-    tkItemColInp.value   = idxToColName(itemColIdx + startCol);
+    tkNoColInp.value   = idxToColName(noColIdx   + startCol);
+    tkItemColInp.value = idxToColName(itemColIdx + startCol);
 
-    const g1 = groupColIdxs[0] != null ? idxToColName(groupColIdxs[0] + startCol) : "";
-    const g2 = groupColIdxs[1] != null ? idxToColName(groupColIdxs[1] + startCol) : "";
+    const g1 = (groupColIdx !== null && groupColIdx >= 0) ? idxToColName(groupColIdx + startCol) : "";
+    const g2 = (subgroupColIdx !== null && subgroupColIdx >= 0) ? idxToColName(subgroupColIdx + startCol) : "";
     if (tkGroupCol1) tkGroupCol1.value = g1;
     if (tkGroupCol2) tkGroupCol2.value = g2;
 
-    const g1T = g1 ? `${g1}("${String(tkAOA[headerRowIdx][groupColIdxs[0]]).trim()}")` : "(없음)";
-    const g2T = g2 ? `${g2}("${String(tkAOA[headerRowIdx][groupColIdxs[1]]).trim()}")` : "(없음)";
-    const noT = `${idxToColName(noColIdx+startCol)}("${tkAOA[headerRowIdx][noColIdx]}")`;
-    const itT = `${idxToColName(itemColIdx+startCol)}("${tkAOA[headerRowIdx][itemColIdx]}")`;
+    const hdr = tkAOA[headerRowIdx] || [];
+    const g1T = g1 ? `${g1}("${String(hdr[groupColIdx] || "").trim()}")` : "(없음)";
+    const g2T = g2 ? `${g2}("${String(hdr[subgroupColIdx] || "빈헤더-데이터있음").trim()}")` : "(없음)";
+    const noT = `${idxToColName(noColIdx+startCol)}("${hdr[noColIdx]}")`;
+    const itT = `${idxToColName(itemColIdx+startCol)}("${hdr[itemColIdx]}")`;
     if (tkDetectSummary){
-      tkDetectSummary.textContent = `No. 열: ${noT} • 문항 열: ${itT} • 구분 열: ${g1T} • 하위 구분 열: ${g2T}`;
+      tkDetectSummary.textContent = `구분 열: ${g1T} • 하위 구분 열: ${g2T} • No. 열: ${noT} • 문항 열: ${itT}`;
     }
 
     updateGroupCheckboxState();
-    log(tkLog, `감지됨 → No.: ${noT} | 구분: ${g1T}, 하위 구분: ${g2T} | 문항: ${itT}`);
+    log(tkLog, `감지됨 → 구분: ${g1T}, 하위 구분: ${g2T} | No.: ${noT} | 문항: ${itT}`);
   }catch(err){
     log(tkLog, "자동 감지 오류: " + err.message);
   }
 }
+
 
 /* ===== To-Know 옵션 상태 동기화 ===== */
 function updateGroupCheckboxState(){
@@ -477,15 +561,7 @@ function updateGroupCheckboxState(){
       if(useSubLabel)  useSubLabel.disabled = !hasSub;
       if(!hasSub && useSubLabel) useSubLabel.checked=false;
     }
-    function syncMutex(ev){
-      if(!useGroupPref || !useSubLabel) return;
-      if(useGroupPref.checked && ev && ev.target===useGroupPref){ useSubLabel.checked=false; }
-      if(useSubLabel.checked  && ev && ev.target===useSubLabel){  useGroupPref.checked=false; }
-    }
-    useGroupPref?.removeEventListener('change', syncMutex);
-    useSubLabel?.removeEventListener('change', syncMutex);
-    useGroupPref?.addEventListener('change', syncMutex);
-    useSubLabel?.addEventListener('change', syncMutex);
+    // ★ 이벤트 리스너는 DOMContentLoaded에서 이미 등록되었으므로 여기서는 불필요
   }catch(e){}
 }
 
@@ -509,13 +585,33 @@ buildMapBtn.addEventListener('click', ()=>{
     let groupCols = [g1, g2].map(x => (x==null? null : x - startCol)).filter(x=>x!==null);
 
     const hdr = tkAOA[headIdx] || [];
-    const g1Lbl = groupCols[0] != null ? `${idxToColName(groupCols[0]+startCol)}=${hdr[groupCols[0]]}` : "(없음)";
-    const g2Lbl = groupCols[1] != null ? `${idxToColName(groupCols[1]+startCol)}=${hdr[groupCols[1]]}` : "(없음)";
-    log(tkLog, `선택된 헤더 → No.: ${idxToColName(noCol+startCol)}=${hdr[noCol]}  |  구분: ${g1Lbl} , 하위 구분: ${g2Lbl}  |  문항: ${idxToColName(itemCol+startCol)}=${hdr[itemCol]}`);
+    const g1Lbl = groupCols[0] != null ? `${idxToColName(groupCols[0]+startCol)}=${hdr[groupCols[0]] || "(빈헤더)"}` : "(없음)";
+    const g2Lbl = groupCols[1] != null ? `${idxToColName(groupCols[1]+startCol)}=${hdr[groupCols[1]] || "(빈헤더)"}` : "(없음)";
+    log(tkLog, `선택된 헤더 → 구분: ${g1Lbl} | 하위 구분: ${g2Lbl} | No.: ${idxToColName(noCol+startCol)}=${hdr[noCol]} | 문항: ${idxToColName(itemCol+startCol)}=${hdr[itemCol]}`);
 
-    for (const ci of groupCols){ forwardFillColumn(tkAOA, ci); }
+    // ★ 구분/하위구분 Forward Fill 처리
+    // - 구분 열(groupCols[0]): 무조건 채우기
+    // - 하위구분 열(groupCols[1]): 구분이 바뀌면 리셋
+    if (groupCols[0] != null) {
+      forwardFillColumn(tkAOA, groupCols[0]); // 구분은 그냥 채우기
+    }
+    if (groupCols[1] != null) {
+      forwardFillColumn(tkAOA, groupCols[1], groupCols[0]); // 하위구분은 구분이 바뀌면 리셋
+    }
 
-    const errs = validateToKnow(tkAOA, headIdx, noCol, itemCol, groupCols);
+    // ★ No.=1인 행 찾기 (데이터 시작점 동적 감지)
+    let dataStartRow = headIdx + 1;
+    for (let r = headIdx + 1; r < Math.min(headIdx + 50, tkAOA.length); r++) {
+      const noVal = tkAOA[r][noCol];
+      if (Number(noVal) === 1) {
+        dataStartRow = r;
+        log(tkLog, `데이터 시작 행 감지: ${dataStartRow + 1}행 (No.=1 발견)`);
+        break;
+      }
+    }
+
+    // ★ 유효성 검사 - 필수 열만 검사하고 나머지는 무시
+    const errs = validateToKnow(tkAOA, dataStartRow - 1, noCol, itemCol, groupCols, dataStartRow);
     if (errs.length){
       alert("To-Know 유효성 검사 오류:\n- " + errs.join("\n- "));
       log(tkLog, "유효성 검사 실패:\n" + errs.join("\n"));
@@ -524,7 +620,9 @@ buildMapBtn.addEventListener('click', ()=>{
 
     const norm = (s)=> String(s ?? "").trim().replace(/\s+/g, " ").replace(/[\,\/\\\|\:\;]+/g, "_");
     tkMap = {};
-    for(let r=headIdx+1; r<tkAOA.length; r++){
+    
+    // ★ dataStartRow부터 처리
+    for(let r=dataStartRow; r<tkAOA.length; r++){
       const noRaw = tkAOA[r][noCol];
       const item  = norm(tkAOA[r][itemCol]);
       const noNum = Number(noRaw);
@@ -532,16 +630,26 @@ buildMapBtn.addEventListener('click', ()=>{
       const q = `Q${noNum}`;
 
       let prefixParts=[];
-      if(useGroupPref.checked){
+      
+      // ★ 체크박스 로직 (뮤텍스)
+      // 1. "하위구분" 체크 → 구분 + 하위구분
+      // 2. "구분" 체크 → 구분만
+      // 3. 둘 다 해제 → 문항만
+      if(useSubLabel.checked && groupCols[1] != null){
+        // "하위구분" 체크됨 → 구분 + 하위구분 둘 다 포함
         if (groupCols[0] != null){
           const v1 = norm(tkAOA[r][groupCols[0]]);
           if (v1) prefixParts.push(v1);
         }
-        if (useSubLabel.checked && groupCols[1] != null){
-          const v2 = norm(tkAOA[r][groupCols[1]]);
-          if (v2) prefixParts.push(v2);
-        }
+        const v2 = norm(tkAOA[r][groupCols[1]]);
+        if (v2) prefixParts.push(v2);
+      } else if(useGroupPref.checked && groupCols[0] != null){
+        // "구분"만 체크됨 → 구분만 포함
+        const v1 = norm(tkAOA[r][groupCols[0]]);
+        if (v1) prefixParts.push(v1);
       }
+      // 둘 다 해제면 prefixParts가 비어있음 → 문항만
+      
       let indexText = "";
       if(prefixParts.length){
         indexText = prefixParts.join("_");
@@ -567,27 +675,51 @@ buildMapBtn.addEventListener('click', ()=>{
   }
 });
 
+
 /* ===== To-Know 유효성 검사 ===== */
-function forwardFillColumn(rows, colIndex){
+function forwardFillColumn(rows, colIndex, resetColIndex){
   if (colIndex == null) return;
   let last = "";
+  let lastResetValue = "";
+  
   for (let i=0;i<rows.length;i++){
     const v = String(rows[i][colIndex] ?? "").trim();
-    if (v !== "") last = v;
-    else if (last !== "") rows[i][colIndex] = last;
+    
+    // ★ resetColIndex가 지정되어 있으면, 해당 열의 값이 바뀔 때 리셋
+    if (resetColIndex != null) {
+      const resetVal = String(rows[i][resetColIndex] ?? "").trim();
+      if (resetVal !== "" && resetVal !== lastResetValue) {
+        // 구분이 바뀌었으므로 하위구분 리셋
+        last = "";
+        lastResetValue = resetVal;
+      }
+    }
+    
+    if (v !== "") {
+      last = v;
+    } else if (last !== "") {
+      rows[i][colIndex] = last;
+    }
   }
 }
-function validateToKnow(tkAOA, headIdx, noCol, itemCol, groupCols){
+function validateToKnow(tkAOA, headIdx, noCol, itemCol, groupCols, dataStartRow){
   const errs = [];
   const seen = new Map();
   const nos  = [];
-  for(let r=headIdx+1; r<tkAOA.length; r++){
+  
+  // ★ dataStartRow가 지정되지 않으면 headIdx+1 사용
+  const startRow = dataStartRow !== undefined ? dataStartRow : (headIdx + 1);
+  
+  for(let r=startRow; r<tkAOA.length; r++){
     const row = tkAOA[r] || [];
     const noRaw = row[noCol];
     const item  = String(row[itemCol]||"").trim();
     const hasNo = (noRaw !== undefined && noRaw !== null && String(noRaw).trim()!=="");
     const noNum = Number(noRaw);
 
+    // ★ No.도 없고 문항도 없으면 빈 행으로 간주하고 건너뛰기
+    if (!hasNo && item === "") continue;
+    
     if (item === "") errs.push(`문항 오류: 공란 (행 ${r+1})`);
     if (item !== "" && !hasNo) errs.push(`오류: 문항은 있는데 No. 없음 (행 ${r+1})`);
     const hasAnyGroup = groupCols.some(ci => String(row[ci]||"").trim()!=="");
@@ -596,7 +728,7 @@ function validateToKnow(tkAOA, headIdx, noCol, itemCol, groupCols){
     if (hasNo && Number.isFinite(noNum)) {
       nos.push(noNum);
       seen.set(noNum, (seen.get(noNum)||0)+1);
-      if (noNum > 50) errs.push(`No. 오류: 50 초과 (${noNum}) (행 ${r+1})`);
+      // ★ 50 제한 해제 (큰 번호도 허용)
     } else if (hasNo) {
       errs.push(`No. 오류: 숫자가 아님 (행 ${r+1})`);
     }
@@ -604,7 +736,10 @@ function validateToKnow(tkAOA, headIdx, noCol, itemCol, groupCols){
   if (nos.length){
     const uniq = Array.from(new Set(nos)).sort((a,b)=>a-b);
     const max  = Math.max(...uniq);
-    const expected = Array.from({length: max}, (_,i)=> i+1);
+    const min  = Math.min(...uniq);
+    
+    // ★ 최소값부터 최대값까지 연속성 검사 (1부터가 아닐 수 있음)
+    const expected = Array.from({length: max - min + 1}, (_,i)=> min + i);
     const missing  = expected.filter(x => !uniq.includes(x));
     for (const [k,c] of seen.entries()){ if (c>1) errs.push(`No. 오류: 중복 번호 ${k}`); }
     if (missing.length) errs.push(`No. 오류: 누락 번호 ${missing.join(", ")}`);
@@ -706,11 +841,11 @@ function detectResponseType(qtext, varsForQ){
   const codeColsByN = {};
   const textColsByN = {};
   for (const v of varsForQ) {
-    let m = v.var.match(new RegExp('^'+qFromVar+'_(\\d+)$')); if (m) codeColsByN[m[1]] = v.colIndex;
-    m = v.var.match(new RegExp('^'+qFromVar+'_(\\d+)\\(TEXT\\)$')); if (m) textColsByN[m[1]] = v.colIndex;
-    m = v.var.match(new RegExp('^'+qFromVar+'_(\\d+)\\.\\s*.*?\\s*\\(TEXT\\)$')); if (m && textColsByN[m[1]] == null) textColsByN[m[1]] = v.colIndex;
+    let m = v.var.match(makeRegExp(qFromVar, '_(\\d+)$')); if (m) codeColsByN[m[1]] = v.colIndex;
+    m = v.var.match(makeRegExp(qFromVar, '_(\\d+)\\(TEXT\\)$')); if (m) textColsByN[m[1]] = v.colIndex;
+    m = v.var.match(makeRegExp(qFromVar, '_(\\d+)\\.\\s*.*?\\s*\\(TEXT\\)$')); if (m && textColsByN[m[1]] == null) textColsByN[m[1]] = v.colIndex;
   }
-  const ns = Object.keys({ ...codeColsByN, ...textColsByN }).sort((a,b)=>Number(a)-Number(b));
+  const ns = sortNumericKeys({ ...codeColsByN, ...textColsByN });
 
   if (ns.length){
     let hasRankNumber = false;
@@ -748,12 +883,11 @@ function detectResponseType(qtext, varsForQ){
 
 /* ===== 보기(요약) 생성 ===== */
 function buildOptionLabels(q, qtext, varsForQ, rtype){
-  const trim = (s)=> String(s==null ? "" : s).trim();
 
   if (rtype === "리커트척도(Matrix)") {
     const out = {};
     for (const v of varsForQ) {
-      const m = v.var.match(new RegExp('^'+q+'_(\\d+)\\.\\s*(.*?)(?:\\s*\\(TEXT\\))?$'));
+      const m = v.var.match(makeRegExp(q, '_(\\d+)\\.\\s*(.*?)(?:\\s*\\(TEXT\\))?$'));
       if (m && !/\(TEXT\)$/.test(v.var)) out[m[1]] = trim(m[2]);
     }
     return out;
@@ -763,13 +897,13 @@ function buildOptionLabels(q, qtext, varsForQ, rtype){
     const textColByN = {};
     const codeColByN = {};
     for (const v of varsForQ) {
-      let m = v.var.match(new RegExp('^'+q+'_(\\d+)$')); if (m) codeColByN[m[1]] = v.colIndex;
-      m = v.var.match(new RegExp('^'+q+'_(\\d+)\\(TEXT\\)$')); if (m) { textColByN[m[1]] = v.colIndex; continue; }
-      m = v.var.match(new RegExp('^'+q+'_(\\d+)\\.\\s*.*?\\s*\\(TEXT\\)$')); if (m && textColByN[m[1]] == null) textColByN[m[1]] = v.colIndex;
+      let m = v.var.match(makeRegExp(q, '_(\\d+)$')); if (m) codeColByN[m[1]] = v.colIndex;
+      m = v.var.match(makeRegExp(q, '_(\\d+)\\(TEXT\\)$')); if (m) { textColByN[m[1]] = v.colIndex; continue; }
+      m = v.var.match(makeRegExp(q, '_(\\d+)\\.\\s*.*?\\s*\\(TEXT\\)$')); if (m && textColByN[m[1]] == null) textColByN[m[1]] = v.colIndex;
     }
 
     const out = {};
-    const ns = Object.keys({ ...textColByN, ...codeColByN }).sort((a,b)=>Number(a)-Number(b));
+    const ns = sortNumericKeys({ ...textColByN, ...codeColByN });
     for (const n of ns) {
       const codeCol = codeColByN[n];
       const textCol = textColByN[n];
@@ -793,11 +927,11 @@ function buildOptionLabels(q, qtext, varsForQ, rtype){
   if (rtype === "순위응답") {
     const textColByN = {};
     for (const v of varsForQ) {
-      let m = v.var.match(new RegExp('^'+q+'_(\\d+)\\(TEXT\\)$')); if (m) { textColByN[m[1]] = v.colIndex; continue; }
-      m = v.var.match(new RegExp('^'+q+'_(\\d+)\\.\\s*.*?\\s*\\(TEXT\\)$')); if (m && textColByN[m[1]] == null) textColByN[m[1]] = v.colIndex;
+      let m = v.var.match(makeRegExp(q, '_(\\d+)\\(TEXT\\)$')); if (m) { textColByN[m[1]] = v.colIndex; continue; }
+      m = v.var.match(makeRegExp(q, '_(\\d+)\\.\\s*.*?\\s*\\(TEXT\\)$')); if (m && textColByN[m[1]] == null) textColByN[m[1]] = v.colIndex;
     }
     const out = {};
-    const ns = Object.keys(textColByN).sort((a,b)=>Number(a)-Number(b));
+    const ns = sortNumericKeys(textColByN);
     for (const n of ns) {
       const col = textColByN[n];
       const uniq = new Set();
@@ -844,7 +978,7 @@ function getMissingOptionNs(q, rtype, options){
   const ns = new Set();
   for(const v of vars){
     if(typeof v.var !== "string") continue;
-    const m = v.var.match(new RegExp("^"+q+"_(\\d+)$"));
+    const m = v.var.match(makeRegExp(q, "_(\\d+)$"));
     if(m) ns.add(m[1]);
   }
   const miss = [];
@@ -889,8 +1023,7 @@ function renderSummary(){
     const tdOpts=document.createElement('td');
     {
       const map = row["보기(요약)"] || {};
-      const pretty = Object.keys(map)
-        .sort((a, b) => Number(a) - Number(b))
+      const pretty = sortNumericKeys(map)
         .map(n => `(${n})${map[n]}`)
         .join(", ");
       tdOpts.innerHTML = `<span class="mono">${escapeHtml(pretty)}</span>`;
@@ -957,7 +1090,6 @@ applyBtn.addEventListener('click', ()=>{
     for (const row of summary) summaryByQ[row["Q번호"]] = row;
     const getOptionsMap = (q) => (summaryByQ[q] ? (summaryByQ[q]["보기(요약)"] || {}) : {});
     const getIndexName = (q) => (summaryByQ[q] ? (summaryByQ[q]["항목명(인덱스)"] || "") : "");
-    const trim = (s)=> String(s==null?"":s).trim();
 
     for (const col of rawColumns){
       const vname = String(col.var ?? "");
@@ -982,13 +1114,13 @@ applyBtn.addEventListener('click', ()=>{
       };
 
       if (rtype === "리커트척도(Matrix)") {
-        const m = vname.match(new RegExp('^'+q+'_(\\d+)(?:\\.|\\(TEXT\\))?'));
+        const m = vname.match(makeRegExp(q, '_(\\d+)(?:\\.|\\(TEXT\\))?'));
         if (m){
           const n = m[1];
           const isText = /\(TEXT\)$/.test(vname);
           let label = options[n];
           if (!label) {
-            const m2 = vname.match(new RegExp('^'+q+'_'+n+'\\.\\s*(.*?)(?:\\s*\\(TEXT\\))?$'));
+            const m2 = vname.match(makeRegExp(q, '_'+n+'\\.\\s*(.*?)(?:\\s*\\(TEXT\\))?$'));
             label = m2 ? trim(m2[1]) : pickLabel(q, n, `옵션${n}`);
           }
           L0 = `${q}. ${idxName ? idxName + "_" : ""}${label}`;
@@ -997,8 +1129,8 @@ applyBtn.addEventListener('click', ()=>{
 
       } else if (rtype === "중복응답" || rtype === "순위응답") {
         const isText = /\(TEXT\)$/.test(vname);
-        const mCode = vname.match(new RegExp('^'+q+'_(\\d+)$'));
-        const mText = vname.match(new RegExp('^'+q+'_(\\d+)\\(TEXT\\)$'));
+        const mCode = vname.match(makeRegExp(q, '_(\\d+)$'));
+        const mText = vname.match(makeRegExp(q, '_(\\d+)\\(TEXT\\)$'));
         if (mCode || mText) {
           const n = (mCode ? mCode[1] : mText[1]);
           const label = pickLabel(q, n, `옵션${n}`);
@@ -1012,7 +1144,7 @@ applyBtn.addEventListener('click', ()=>{
         } else if (vname === `${q}(TEXT)`) {
           L0 = `${q}. ${idxName || ""}`; L1 = "(TEXT)";
         } else {
-          const m = vname.match(new RegExp('^'+q+'_(\\d+)(?:\\(TEXT\\))?$'));
+          const m = vname.match(makeRegExp(q, '_(\\d+)(?:\\(TEXT\\))?$'));
           if (m) {
             const n = m[1];
             const isText = /\(TEXT\)$/.test(vname);
@@ -1152,6 +1284,28 @@ document.addEventListener('DOMContentLoaded', ()=>{
   const notice = document.getElementById('brandNotice');
   const title = document.querySelector('h1');
   if(notice && title){ title.insertAdjacentElement('afterend', notice); }
+  
+  // ★ To-Know 체크박스 뮤텍스 즉시 적용
+  const useGroupPref = document.getElementById('useGroupPref');
+  const useSubLabel = document.getElementById('useSubLabel');
+  if(useGroupPref && useSubLabel){
+    // 초기 상태: 둘 다 체크되어 있으면 하위구분만 해제
+    if(useGroupPref.checked && useSubLabel.checked){
+      useSubLabel.checked = false;
+    }
+    
+    // ★ 페이지 로드 시 즉시 이벤트 리스너 등록!
+    const syncMutexHandler = (ev) => {
+      if(ev && ev.target===useGroupPref){
+        useSubLabel.checked = false;
+      }
+      if(ev && ev.target===useSubLabel){
+        useGroupPref.checked = false;
+      }
+    };
+    useGroupPref.addEventListener('change', syncMutexHandler);
+    useSubLabel.addEventListener('change', syncMutexHandler);
+  }
 });
 
 /* ===== 내려받기 옵션 상호배제 (현행 유지) ===== */
